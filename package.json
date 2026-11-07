@@ -1,0 +1,15 @@
+{
+  "name": "insider-game",
+  "version": "1.0.0",
+  "description": "인사이더 - 친구들과 즐기는 웹 보드게임 (4~8명)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "socket.io": "^4.7.5"
+  }
+}
