@@ -21,29 +21,41 @@ const { Server } = require('socket.io');
 // 1. 게임 로직
 // ═════════════════════════════════════════════════════════════
 // ─────────────────────────────────────────────────────────────
-// 제시어 (예/아니오 질문으로 좁혀 갈 수 있는 구체적인 명사 위주)
-// 여기만 고치면 단어가 바뀐다.
+// 제시어: 주제별로 묶여 있고, 라운드가 시작되면 주제가 모두에게 공개된다.
+// 예/아니오 질문으로 좁혀 갈 수 있는 구체적인 명사 위주. 여기만 고치면 단어가 바뀐다.
 // ─────────────────────────────────────────────────────────────
-const WORDS = [
-  // 음식
-  '김치찌개', '떡볶이', '치킨', '라면', '피자', '초밥', '삼겹살', '짜장면', '아이스크림', '김밥',
-  '햄버거', '순대', '붕어빵', '호떡', '마라탕', '냉면', '비빔밥', '샌드위치', '팝콘', '초콜릿',
-  // 장소
-  '놀이공원', '도서관', '편의점', '지하철', '목욕탕', '노래방', '영화관', '공항', '캠핑장', '수영장',
-  '병원', '찜질방', '피시방', '동물원', '해수욕장', '헬스장',
-  // 사물
-  '우산', '냉장고', '선풍기', '안경', '칫솔', '리모컨', '에어컨', '이어폰', '보조배터리', '가위',
-  '거울', '시계', '베개', '텀블러', '자전거', '캐리어', '전자레인지', '마우스', '키보드', '지갑',
-  '열쇠', '라이터', '손톱깎이', '빨래건조대', '청소기',
-  // 직업
-  '소방관', '의사', '요리사', '경찰관', '선생님', '가수', '택배기사', '변호사', '파일럿', '개그맨',
-  '마술사', '유튜버',
-  // 동물
-  '고양이', '펭귄', '코끼리', '카멜레온', '앵무새', '기린', '고래', '거북이', '토끼', '햄스터',
-  // 상황과 행사
-  '무지개', '눈사람', '태풍', '화산', '사막', '크리스마스', '생일파티', '소풍', '월드컵', '올림픽',
-  '결혼식', '롤러코스터', '낙하산', '불꽃놀이', '캠프파이어', '첫눈', '방학', '월급날', '야근', '회식',
-];
+const WORDS_BY_CATEGORY = {
+  '음식': [
+    '김치찌개', '떡볶이', '치킨', '라면', '피자', '초밥', '삼겹살', '짜장면', '아이스크림', '김밥',
+    '햄버거', '순대', '붕어빵', '호떡', '마라탕', '냉면', '비빔밥', '샌드위치', '팝콘', '초콜릿',
+  ],
+  '장소': [
+    '놀이공원', '도서관', '편의점', '지하철', '목욕탕', '노래방', '영화관', '공항', '캠핑장', '수영장',
+    '병원', '찜질방', '피시방', '동물원', '해수욕장', '헬스장',
+  ],
+  '사물': [
+    '우산', '냉장고', '선풍기', '안경', '칫솔', '리모컨', '에어컨', '이어폰', '보조배터리', '가위',
+    '거울', '시계', '베개', '텀블러', '자전거', '캐리어', '전자레인지', '마우스', '키보드', '지갑',
+    '열쇠', '라이터', '손톱깎이', '빨래건조대', '청소기', '롤러코스터', '낙하산',
+  ],
+  '직업': [
+    '소방관', '의사', '요리사', '경찰관', '선생님', '가수', '택배기사', '변호사', '파일럿', '개그맨',
+    '마술사', '유튜버', '미용사', '사진작가', '번역가',
+  ],
+  '동물': [
+    '고양이', '펭귄', '코끼리', '카멜레온', '앵무새', '기린', '고래', '거북이', '토끼', '햄스터',
+    '사자', '문어', '박쥐', '돌고래',
+  ],
+  '자연과 날씨': [
+    '무지개', '눈사람', '태풍', '화산', '사막', '첫눈', '번개', '노을', '오로라', '폭포',
+  ],
+  '행사와 상황': [
+    '크리스마스', '생일파티', '소풍', '월드컵', '올림픽', '결혼식', '불꽃놀이', '캠프파이어', '방학', '월급날',
+    '야근', '회식',
+  ],
+};
+const WORDS = Object.values(WORDS_BY_CATEGORY).flat();
+const categoryOf = (word) => Object.keys(WORDS_BY_CATEGORY).find((c) => WORDS_BY_CATEGORY[c].includes(word)) || null;
 
 const CFG = {
   minPlayers: 4,
@@ -105,6 +117,7 @@ class Room {
     this.masterToken = null;
     this.insiderToken = null;
     this.word = null;
+    this.category = null;
     this.guessedBy = null;
     this.skip = new Set();
     this.votes = new Map(); // voterToken -> targetId
@@ -292,6 +305,7 @@ class Room {
     this.masterToken = master.token;
     this.insiderToken = insider.token;
     this.word = word;
+    this.category = categoryOf(word);
 
     // 질문 순서는 무작위로 섞는다 (인사이더가 항상 같은 순번이 되지 않도록)
     const askers = actives.filter((p) => p !== master).map((p) => p.token);
@@ -304,7 +318,7 @@ class Room {
 
     this.setPhase('asking', this.cfg.askMs);
     this.normalizeTurn();
-    this.sys(`${this.round}번째 라운드를 시작해요. 출제자는 ${master.name}님이에요.`, 'both');
+    this.sys(`${this.round}번째 라운드를 시작해요. 출제자는 ${master.name}님, 주제는 ${this.category}이에요.`, 'both');
     this.touch();
   }
 
@@ -492,6 +506,7 @@ class Room {
       masterName: master.name,
       guessedBy: this.guessedBy,
       word: this.word,
+      category: this.category,
       votes,
       tally,
     };
@@ -565,6 +580,7 @@ class Room {
           voted: this.phase === 'vote' && this.votes.has(p.token),
           skipped: this.phase === 'discussion' && this.skip.has(p.token),
         })),
+      category: inRound ? this.category : null, // 주제는 모두에게 공개
       guessedBy: this.guessedBy,
       result: this.phase === 'result' ? this.result : null,
       turn: this.phase === 'asking' ? this.turnView() : null,
@@ -749,7 +765,10 @@ const HTML = `<!doctype html>
   }
   .qa-head { display: flex; align-items: baseline; gap: .6rem; padding: .55rem .85rem; background: var(--primary); color: var(--primary-ink); }
   .qa-head h2 { font-size: 1.25rem; }
-  .qa-head span { font-size: .85rem; opacity: .92; }
+  .qa-topic { margin-left: auto; padding: .05rem .8rem; border-radius: 99px; background: var(--primary-ink); color: var(--primary); font-weight: 600; }
+  .qa-topic:empty { display: none; }
+  .topic-line { display: flex; align-items: baseline; gap: .5rem; }
+  .topic-line b { font-family: var(--display); font-weight: 400; font-size: 1.5rem; color: var(--primary); }
   .qa-turn { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding: .55rem .85rem; border-bottom: 1px solid var(--line); }
   .turn-text { font-weight: 600; }
   .turn-order { display: flex; flex-wrap: wrap; gap: .3rem; }
@@ -876,7 +895,7 @@ const HTML = `<!doctype html>
 
     <section class="talk">
       <div class="qa" id="qaPanel" hidden>
-        <div class="qa-head"><h2>질문과 답변</h2><span>출제자에게 묻고 답을 듣는 곳</span></div>
+        <div class="qa-head"><h2>질문과 답변</h2><span class="qa-topic" id="qaTopic"></span></div>
         <div class="qa-turn" id="qaTurn" hidden></div>
         <div class="qa-log" id="qaLog" role="log" aria-live="polite" aria-label="질문과 답변"></div>
         <div class="qa-composer" id="qaComposer" hidden></div>
@@ -1054,7 +1073,7 @@ const HTML = `<!doctype html>
     switch (m.role) {
       case 'master': return { role: '출제자', word: m.word, note: '제시어를 알고 있어요. 예, 아니오, 모르겠음으로만 답하세요.' };
       case 'insider': return { role: '인사이더', word: m.word, note: '정체를 숨기고, 정답이 나오도록 티 나지 않게 이끄세요.' };
-      case 'commoner': return { role: '일반인', word: m.word, note: m.word ? '' : '제시어를 몰라요. 질문으로 좁혀 가세요.' };
+      case 'commoner': return { role: '일반인', word: m.word, note: m.word ? '' : \`주제: \${s.category || ''}. 질문으로 제시어를 좁혀 가세요.\` };
       default: return { role: '관전 중', word: m.word, note: '다음 라운드부터 함께해요.' };
     }
   }
@@ -1115,7 +1134,7 @@ const HTML = `<!doctype html>
 
   function renderStage(s) {
     const online = s.players.filter((p) => p.active && p.connected);
-    const key = JSON.stringify([s.phase, s.me.role, s.me.isHost, s.me.skipped, s.me.myVote, s.online, s.cfg, s.readyCount, s.me.ready,
+    const key = JSON.stringify([s.phase, s.me.role, s.me.isHost, s.me.skipped, s.me.myVote, s.online, s.cfg, s.readyCount, s.me.ready, s.category,
       s.guessedBy, s.result, online.length, s.players.map((p) => [p.id, p.voted, p.skipped, p.active])]);
     fill($('#stage'), key, () => {
       switch (s.phase) {
@@ -1153,6 +1172,7 @@ const HTML = `<!doctype html>
         el('summary', { text: '게임 방법' }),
         el('ul', {},
           el('li', { text: '게임 준비를 누른 사람만 참가해요. 4~8명이 준비하면 누구든 시작할 수 있어요.' }),
+          el('li', { text: '라운드가 시작되면 주제(음식, 장소, 동물 등)가 모두에게 공개돼요. 제시어는 그 주제 안의 단어예요.' }),
           el('li', { text: '출제자와 인사이더는 제시어를 알아요. 출제자는 누구인지 공개돼요.' }),
           el('li', { text: '일반인과 인사이더는 한 명씩 차례대로 출제자에게 질문해요. 출제자는 예, 아니오, 모르겠음 버튼으로만 답하고, 답이 나오면 다음 사람 차례예요.' }),
           el('li', { text: '정답은 차례와 상관없이 언제든 말할 수 있고 출제자가 판정해요. 5분 안에 못 맞히면 모두 패배해요.' }),
@@ -1167,7 +1187,11 @@ const HTML = `<!doctype html>
       commoner: '내 차례에 예 또는 아니오로 답할 수 있는 질문을 하세요. 정답을 알면 차례와 상관없이 말할 수 있어요.',
       spectator: '관전 중이에요. 다음 라운드부터 함께해요.',
     };
-    return [el('h2', { text: '질문 시간' }), el('p', { text: tips[s.me.role] || '' })];
+    return [
+      el('h2', { text: '질문 시간' }),
+      s.category ? el('p', { class: 'topic-line' }, '주제', el('b', { text: s.category })) : null,
+      el('p', { text: tips[s.me.role] || '' }),
+    ];
   }
 
   function stageDiscussion(s, online) {
@@ -1207,6 +1231,7 @@ const HTML = `<!doctype html>
     const lines = [
       el('div', { class: 'facts' },
         el('span', {}, '인사이더: ', el('b', { text: r.insiderName })),
+        el('span', {}, '주제: ', el('b', { text: r.category || '' })),
         el('span', {}, '제시어: ', el('b', { text: r.word })),
         el('span', {}, '출제자: ', el('b', { text: r.masterName })),
         r.guessedBy ? el('span', {}, '맞힌 사람: ', el('b', { text: r.guessedBy })) : null),
@@ -1231,6 +1256,7 @@ const HTML = `<!doctype html>
     const panel = $('#qaPanel');
     panel.hidden = s.phase === 'lobby';
     if (panel.hidden) { wasMyTurn = false; return; }
+    $('#qaTopic').textContent = s.category ? \`주제 \${s.category}\` : '';
     renderTurn(s);
     renderQaLog(s);
     renderQaComposer(s);
@@ -1551,4 +1577,4 @@ if (require.main === module) {
   server.listen(PORT, () => console.log(`insider listening on :${PORT}`));
 }
 
-module.exports = { Room, WORDS, CFG, HTML, server, io, rooms };
+module.exports = { Room, WORDS, WORDS_BY_CATEGORY, CFG, HTML, server, io, rooms };
