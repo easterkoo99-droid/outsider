@@ -67,6 +67,7 @@ const CFG = {
   turnBased: true, // true: 한 명씩 차례대로 질문, false: 아무나 아무 때나 질문
 };
 
+const COLOR_COUNT = 8; // 화면의 이름표 색 개수 (public/index.html 의 --pc0 ~ --pc7 과 맞춰야 함)
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ANSWERS = { yes: '예', no: '아니오', idk: '모르겠음' };
 
@@ -182,6 +183,13 @@ class Room {
 
   dispose() { clearTimeout(this.timer); this.timer = null; }
 
+  // 지금 방에서 쓰이지 않는 가장 작은 번호의 색. 다 쓰였으면 순서대로 돌려 쓴다.
+  pickColor() {
+    const used = new Set([...this.players.values()].map((p) => p.color));
+    for (let i = 0; i < COLOR_COUNT; i++) if (!used.has(i)) return i;
+    return this.joinSeq % COLOR_COUNT;
+  }
+
   // ── 입장과 퇴장 ─────────────────────────────────────────────
   join(token, rawName) {
     this.touch();
@@ -204,6 +212,7 @@ class Room {
       connected: true,
       active: this.phase === 'lobby' || this.phase === 'result',
       ready: false,
+      color: this.pickColor(),
       score: 0,
       masterCount: 0,
       order: ++this.joinSeq,
@@ -344,7 +353,7 @@ class Room {
       throw userError('출제자는 예, 아니오, 모르겠음 버튼으로만 답할 수 있어요.');
     }
     const spectating = ['asking', 'discussion', 'vote'].includes(this.phase) && !p.active;
-    this.push({ type: 'chat', pid: p.id, name: p.name, text, spec: spectating }, 'talk');
+    this.push({ type: 'chat', pid: p.id, name: p.name, ci: p.color, text, spec: spectating }, 'talk');
     this.touch();
   }
 
@@ -383,7 +392,7 @@ class Room {
     } else if (this.queue.length >= 10) {
       throw userError('답을 기다리는 질문이 너무 많아요.');
     }
-    const m = this.push({ type: 'question', pid: p.id, name: p.name, text, ans: null }, 'qa');
+    const m = this.push({ type: 'question', pid: p.id, name: p.name, ci: p.color, text, ans: null }, 'qa');
     this.queue.push(m.id);
     this.touch();
   }
@@ -422,7 +431,7 @@ class Room {
     if (this.qa.some((m) => m.type === 'guess' && m.pid === p.id && m.status === 'pending')) {
       throw userError('이전 정답 시도를 출제자가 판정할 때까지 기다려 주세요.');
     }
-    this.push({ type: 'guess', pid: p.id, name: p.name, text, status: 'pending' }, 'qa');
+    this.push({ type: 'guess', pid: p.id, name: p.name, ci: p.color, text, status: 'pending' }, 'qa');
     this.touch();
   }
 
@@ -525,7 +534,7 @@ class Room {
       turnBased: this.cfg.turnBased,
       askerId: asker ? asker.id : null,
       order: this.cfg.turnBased
-        ? this.qOrder.map((t) => this.players.get(t)).filter(Boolean).map((p) => ({ id: p.id, name: p.name }))
+        ? this.qOrder.map((t) => this.players.get(t)).filter(Boolean).map((p) => ({ id: p.id, name: p.name, color: p.color }))
         : [],
       waiting: this.queue.length > 0,
     };
@@ -571,6 +580,7 @@ class Room {
         .map((p) => ({
           id: p.id,
           name: p.name,
+          color: p.color,
           connected: p.connected,
           active: p.active,
           ready: p.ready,
@@ -615,6 +625,9 @@ const HTML = `<!doctype html>
     --signal: #D42A63;
     --signal-ink: #FFFFFF;
     --ok: #17725B;
+    --ring: #FFFFFF;
+    --pc0: #1B58B5; --pc1: #A04800; --pc2: #17692F; --pc3: #A82B72;
+    --pc4: #06696E; --pc5: #7339B5; --pc6: #B33324; --pc7: #586600;
     --display: "Do Hyeon", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
     --body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
     color-scheme: light;
@@ -631,6 +644,9 @@ const HTML = `<!doctype html>
       --signal: #FF6B96;
       --signal-ink: #2B0B1A;
       --ok: #55D6AC;
+      --ring: #15132A;
+      --pc0: #7DB1FF; --pc1: #FFA24D; --pc2: #5FD98A; --pc3: #FF7DB8;
+      --pc4: #4FD1D6; --pc5: #C08BFF; --pc6: #FF7A6B; --pc7: #C6D94A;
       color-scheme: dark;
     }
   }
@@ -702,14 +718,20 @@ const HTML = `<!doctype html>
 
   #players { list-style: none; margin: 0; padding: 0; display: grid; gap: .1rem; }
   #players li {
-    display: grid; grid-template-columns: auto 1fr auto; gap: .5rem; align-items: center;
+    display: grid; grid-template-columns: 1fr auto; gap: .5rem; align-items: center;
     padding: .35rem .15rem; border-bottom: 1px solid var(--line);
   }
   #players li:last-child { border-bottom: 0; }
-  .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--ok); }
-  .dot.off { background: transparent; border: 2px solid var(--muted); }
-  .pname { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; min-width: 0; overflow-wrap: anywhere; }
-  .pname.me { font-weight: 600; }
+  #players li.off .nm { opacity: .6; }
+  .pname { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; min-width: 0; overflow-wrap: anywhere; }
+
+  /* 이름표: 네모 색 칩과 같은 색의 닉네임으로 누구의 말인지 한눈에 구분한다 */
+  .c0 { --pc: var(--pc0); } .c1 { --pc: var(--pc1); } .c2 { --pc: var(--pc2); } .c3 { --pc: var(--pc3); }
+  .c4 { --pc: var(--pc4); } .c5 { --pc: var(--pc5); } .c6 { --pc: var(--pc6); } .c7 { --pc: var(--pc7); }
+  .cx { --pc: var(--muted); }
+  .nm, .tag { display: inline-flex; align-items: center; gap: .4em; }
+  .nm { color: var(--pc); font-weight: 600; }
+  .sw { flex: none; width: .72em; height: .72em; border-radius: 2px; background: var(--pc); box-shadow: 0 0 0 1.5px var(--ring); }
   .badge { font-size: .75rem; padding: 0 .45rem; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
   .badge.strong { border-color: var(--primary); color: var(--primary); }
   .score { font-variant-numeric: tabular-nums; font-weight: 600; }
@@ -742,7 +764,7 @@ const HTML = `<!doctype html>
   details ul { margin: .5rem 0 0; padding-left: 1.2rem; color: var(--muted); font-size: .92rem; }
 
   .vote-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: .5rem; }
-  .vote-btn { min-height: 52px; }
+  .vote-btn { min-height: 52px; display: inline-flex; align-items: center; justify-content: center; }
   .vote-btn[aria-pressed=true] { background: var(--primary); border-color: var(--primary); color: var(--primary-ink); font-weight: 600; }
   .votes { margin: 0; padding-left: 1.1rem; color: var(--muted); font-size: .92rem; }
   .facts { display: grid; gap: .15rem; }
@@ -772,15 +794,17 @@ const HTML = `<!doctype html>
   .qa-turn { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .75rem; padding: .55rem .85rem; border-bottom: 1px solid var(--line); }
   .turn-text { font-weight: 600; }
   .turn-order { display: flex; flex-wrap: wrap; gap: .3rem; }
-  .turnchip { font-size: .8rem; padding: 0 .55rem; border-radius: 99px; border: 1px solid var(--primary); color: var(--primary); }
+  .turnchip { display: inline-flex; align-items: center; font-size: .8rem; padding: 0 .55rem; border-radius: 99px; border: 1px solid var(--primary); color: var(--primary); }
   .turnchip.current { background: var(--primary); color: var(--primary-ink); font-weight: 600; }
   .qa-log { height: 230px; overflow-y: auto; padding: .7rem .85rem; display: flex; flex-direction: column; gap: .6rem; }
   .q { display: grid; gap: .25rem; }
   .q-bubble {
-    justify-self: start; max-width: 92%; padding: .35rem .8rem .35rem .6rem; overflow-wrap: anywhere;
+    display: grid; gap: .25rem; justify-self: start; max-width: 92%; padding: .4rem .85rem .5rem .6rem;
     background: var(--panel); border: 1.5px solid var(--primary); border-radius: 3px 14px 14px 14px;
   }
-  .qtag { display: inline-block; margin-right: .4rem; padding: 0 .4rem; border-radius: 4px; background: var(--primary); color: var(--primary-ink); font-family: var(--display); }
+  .q-head { display: flex; align-items: center; gap: .5rem; }
+  .q-text { overflow-wrap: anywhere; }
+  .qtag { flex: none; padding: 0 .45rem; border-radius: 4px; background: var(--primary); color: var(--primary-ink); font-family: var(--display); }
   .a-line { justify-self: end; }
   .a-line.wait { color: var(--muted); font-size: .85rem; }
   .a-chip {
@@ -798,8 +822,7 @@ const HTML = `<!doctype html>
   .qa-composer .guess-form { grid-template-columns: 1fr auto; }
   .qa .msg.guess { background: var(--panel); }
   .msg { overflow-wrap: anywhere; }
-  .msg .who { font-weight: 600; margin-right: .4rem; }
-  .msg.me .who { color: var(--primary); }
+  .msg .who { margin-right: .5rem; }
   .msg.sys { color: var(--muted); font-size: .9rem; text-align: center; padding: .15rem 0; }
   .msg.answer { padding: .15rem .6rem; border-left: 3px solid var(--line); }
   .chip { display: inline-block; padding: 0 .55rem; border-radius: 99px; font-weight: 600; border: 1px solid currentColor; }
@@ -807,7 +830,9 @@ const HTML = `<!doctype html>
   .chip.no { color: var(--signal); }
   .chip.idk { color: var(--muted); }
   .msg.guess { padding: .4rem .6rem; border: 1px solid var(--primary); border-radius: 10px; }
-  .msg.guess .state { margin-left: .4rem; font-size: .85rem; color: var(--muted); }
+  .g-head { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; }
+  .g-text { margin-top: .15rem; font-weight: 600; overflow-wrap: anywhere; }
+  .msg.guess .state { margin-left: auto; font-size: .85rem; color: var(--muted); }
   .msg.guess.correct { border-color: var(--ok); }
   .msg.guess.correct .state { color: var(--ok); font-weight: 600; }
   .msg.guess.wrong { opacity: .75; }
@@ -951,6 +976,12 @@ const HTML = `<!doctype html>
     node.replaceChildren(...build().flat(Infinity).filter((x) => x != null && x !== false));
     return true;
   }
+
+  // 이름표: nameTag 는 색 칩 + 같은 색 닉네임, plainTag 는 색 칩 + 기본 글자색 (버튼 안처럼 색 글자가 읽기 어려운 곳)
+  const colorClass = (ci) => 'c' + (Number.isInteger(ci) && ci >= 0 ? ci % 8 : 'x');
+  const swatch = () => el('span', { class: 'sw', 'aria-hidden': 'true' });
+  const nameTag = (name, ci) => el('span', { class: \`nm \${colorClass(ci)}\` }, swatch(), name);
+  const plainTag = (name, ci) => el('span', { class: \`tag \${colorClass(ci)}\` }, swatch(), name);
 
   let toastTimer;
   function toast(msg) {
@@ -1115,9 +1146,8 @@ const HTML = `<!doctype html>
         canKick && !isMe
           ? el('button', { class: 'btn small', text: '내보내기', onclick: () => { if (confirm(\`\${p.name}님을 내보낼까요?\`)) send('kick', { id: p.id }); } })
           : null);
-      return el('li', {},
-        el('span', { class: 'dot' + (p.connected ? '' : ' off'), 'aria-hidden': 'true' }),
-        el('span', { class: 'pname' + (isMe ? ' me' : '') }, p.name + (isMe ? ' (나)' : ''), badges),
+      return el('li', { class: p.connected ? '' : 'off' },
+        el('span', { class: 'pname' }, nameTag(p.name, p.color), isMe ? el('span', { class: 'muted', text: '(나)' }) : null, badges),
         right);
     }));
   }
@@ -1218,7 +1248,7 @@ const HTML = `<!doctype html>
       el('p', { class: 'muted', text: \`\${voted}/\${online.length}명이 투표했어요. 투표는 마감 전까지 바꿀 수 있어요.\` }),
       canVote
         ? el('div', { class: 'vote-grid' }, targets.map((p) =>
-            el('button', { class: 'btn vote-btn', text: p.name, 'aria-pressed': String(s.me.myVote === p.id), onclick: () => send('vote', { target: p.id }) })))
+            el('button', { class: 'btn vote-btn', 'aria-pressed': String(s.me.myVote === p.id), onclick: () => send('vote', { target: p.id }) }, plainTag(p.name, p.color))))
         : el('p', { class: 'muted', text: '관전 중에는 투표할 수 없어요.' }),
     ];
   }
@@ -1277,7 +1307,7 @@ const HTML = `<!doctype html>
       return [
         el('span', { class: 'turn-text', text }),
         el('span', { class: 'turn-order', 'aria-label': '질문 순서' },
-          t.order.map((o) => el('span', { class: 'turnchip' + (o.id === t.askerId ? ' current' : ''), text: o.name }))),
+          t.order.map((o) => el('span', { class: 'turnchip' + (o.id === t.askerId ? ' current' : '') }, plainTag(o.name, o.color)))),
       ];
     });
     const myTurnNow = mine && !t.waiting;
@@ -1300,16 +1330,16 @@ const HTML = `<!doctype html>
     if (m.type === 'question') {
       return el('div', { class: 'q' },
         el('div', { class: 'q-bubble' },
-          el('span', { class: 'qtag', text: 'Q' }), el('span', { class: 'who', text: m.name }), el('span', { text: m.text })),
+          el('div', { class: 'q-head' }, el('span', { class: 'qtag', text: 'Q' }), nameTag(m.name, m.ci)),
+          el('div', { class: 'q-text', text: m.text })),
         m.ans
           ? el('div', { class: 'a-line' }, el('span', { class: \`a-chip \${m.ans.kind}\`, text: m.ans.text }))
           : el('div', { class: 'a-line wait', text: '답변 대기 중' }));
     }
     const label = { pending: '판정 중', wrong: '오답', correct: '정답', void: '무효' }[m.status];
     return el('div', { class: \`msg guess \${m.status}\` },
-      el('span', { class: 'who', text: \`\${m.name}님의 정답 시도\` }),
-      el('span', { text: m.text }),
-      el('span', { class: 'state', text: label }),
+      el('div', { class: 'g-head' }, nameTag(m.name, m.ci), el('span', { text: '님의 정답 시도' }), el('span', { class: 'state', text: label })),
+      el('div', { class: 'g-text', text: m.text }),
       isMaster && m.status === 'pending'
         ? el('div', { class: 'judge' },
             el('button', { class: 'btn small primary', text: '정답', onclick: () => send('judge', { id: m.id, correct: true }) }),
@@ -1387,8 +1417,9 @@ const HTML = `<!doctype html>
 
   function talkNode(m, s) {
     if (m.type === 'sys') return el('div', { class: 'msg sys', text: m.text });
-    return el('div', { class: 'msg' + (m.pid === s.me.id ? ' me' : '') },
-      el('span', { class: 'who', text: m.name + (m.spec ? ' (관전)' : '') }), el('span', { text: m.text }));
+    return el('div', { class: 'msg' },
+      el('span', { class: 'who' }, nameTag(m.name, m.ci), m.spec ? el('span', { class: 'muted', text: ' (관전)' }) : null),
+      el('span', { text: m.text }));
   }
 
   function renderComposer(s) {
